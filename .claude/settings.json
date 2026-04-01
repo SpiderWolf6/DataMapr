@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx create-react-app:*)",
+      "Bash(npm install:*)",
+      "Bash(pip install:*)",
+      "Bash(python -c \"from models import init_db; init_db\\(\\); print\\(''DB OK''\\)\")",
+      "Bash(python -c \"from scoring import analyze; print\\(analyze\\([]\\)\\)\")",
+      "Bash(rm -f datamapr.db)",
+      "Bash(python -c \":*)"
+    ]
+  }
+}
