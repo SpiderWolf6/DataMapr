@@ -114,6 +114,96 @@ function dotClass(level) {
   return 'risk-dot dot-high';
 }
 
+const SAMPLE_AI = {
+  executive_summary: "This integration landscape spans four systems with meaningfully different risk profiles. Salesforce presents the lowest risk given its native connector and well-documented REST API, while the on-prem Oracle ERP represents the most significant challenge — no managed connector exists, the schema is complex, and data quality issues compound an already difficult access situation. The Kafka event stream introduces schema drift risk that will require ongoing monitoring. A phased approach is strongly recommended to contain blast radius and allow the team to build institutional knowledge before tackling the legacy system.",
+  connector_discovery: [
+    {
+      source: "Salesforce CRM",
+      suggested_connector: "Salesforce REST API v58+ (official)",
+      integration_method: "Incremental sync via Change Data Capture (CDC)",
+      complexity_notes: "OAuth 2.0 required. API limits at 100k calls/day on Enterprise tier — batch window scheduling recommended to stay within limits.",
+    },
+    {
+      source: "Oracle ERP (on-prem)",
+      suggested_connector: "Custom JDBC connector or Oracle GoldenGate CDC",
+      integration_method: "Database-level CDC via redo log tailing",
+      complexity_notes: "No SaaS connector available. Requires network-level access to the Oracle host and a dedicated integration server in the same VPC. GoldenGate licensing adds cost.",
+    },
+    {
+      source: "Kafka Event Stream",
+      suggested_connector: "Confluent Kafka Connect (managed) or custom consumer",
+      integration_method: "Real-time streaming consumer with schema registry",
+      complexity_notes: "Schema Registry integration is critical given frequent drift. Avro or Protobuf recommended over JSON to enforce contracts at the producer level.",
+    },
+    {
+      source: "Google Analytics 4",
+      suggested_connector: "GA4 Data API (official Google client library)",
+      integration_method: "Daily batch export via BigQuery link or API pull",
+      complexity_notes: "BigQuery export is the preferred path — avoids API quota constraints. Data freshness is 24–48 hours by design; real-time is not supported.",
+    },
+  ],
+  integration_strategy: {
+    approach: "Phased rollout",
+    rationale: "Starting with low-risk, high-value sources lets the team validate infrastructure and build confidence before taking on the Oracle ERP, which carries the highest technical and coordination risk. Kafka is placed in Phase 2 rather than Phase 3 due to its business-critical event data, but its schema drift risk requires the schema registry work to be completed first.",
+    phases: [
+      {
+        name: "Phase 1: Establish foundation",
+        sources: ["Salesforce CRM", "Google Analytics 4"],
+        duration_weeks: 10,
+        rationale: "Both sources have documented APIs, managed connectors, and clear schemas. This phase validates the pipeline infrastructure, monitoring, and deployment process with manageable risk.",
+      },
+      {
+        name: "Phase 2: Real-time stream",
+        sources: ["Kafka Event Stream"],
+        duration_weeks: 12,
+        rationale: "Kafka requires schema registry setup and drift handling before it can be considered stable. Building on the infrastructure from Phase 1, this phase adds real-time capability while schema contracts are enforced.",
+      },
+      {
+        name: "Phase 3: Legacy system",
+        sources: ["Oracle ERP (on-prem)"],
+        duration_weeks: 20,
+        rationale: "Oracle ERP is intentionally last. The team will have a mature pipeline, proven monitoring, and operational experience before taking on the highest-risk source. Network access, GoldenGate licensing, and data quality remediation should begin during Phase 2.",
+      },
+    ],
+  },
+  risk_heuristics: [
+    {
+      risk: "Oracle ERP has no managed connector and requires direct database access",
+      severity: "critical",
+      affected_sources: ["Oracle ERP (on-prem)"],
+      mitigation: "Engage the Oracle DBA team early to establish redo log access. Evaluate GoldenGate vs. a custom JDBC approach based on licensing budget. Plan for a 4–6 week access and security review before any development begins.",
+    },
+    {
+      risk: "Kafka schema drift will silently break downstream consumers",
+      severity: "high",
+      affected_sources: ["Kafka Event Stream"],
+      mitigation: "Enforce a schema registry (Confluent or AWS Glue) with compatibility mode set to BACKWARD. Add schema validation as a pipeline gate — reject messages that fail before they reach storage.",
+    },
+    {
+      risk: "Salesforce API rate limits may cause pipeline delays at peak load",
+      severity: "medium",
+      affected_sources: ["Salesforce CRM"],
+      mitigation: "Implement exponential backoff with jitter. Schedule bulk sync jobs outside business hours. Monitor daily API usage against the 100k call ceiling and alert at 80%.",
+    },
+    {
+      risk: "Oracle data quality issues will propagate downstream without remediation",
+      severity: "high",
+      affected_sources: ["Oracle ERP (on-prem)"],
+      mitigation: "Run a data profiling pass (Great Expectations or dbt tests) before go-live. Define null thresholds and deduplication rules as acceptance criteria — do not go live until these pass.",
+    },
+  ],
+  ai_timeline: {
+    total_weeks: 42,
+    team_composition: "2 senior data engineers, 1 integration architect, 1 data quality analyst (Phase 3 only)",
+    assumptions: "Assumes network access to Oracle host is granted within 2 weeks of project start. Schema registry decision is made before Phase 2 begins. No organizational change management scope included.",
+  },
+  ai_cost_estimate: {
+    low_usd: 147000,
+    high_usd: 315000,
+    assumptions: "Low end assumes two W2 engineers at $3,500/wk fully-loaded. High end assumes contractor rates at $7,500/wk plus integration architect at a premium. Excludes GoldenGate licensing (~$15–40k/yr), infrastructure costs, and data quality tooling.",
+  },
+};
+
 export default function App() {
   const [sources, setSources] = useState([]);
   const [form, setForm] = useState({ ...DEFAULTS });
@@ -123,6 +213,7 @@ export default function App() {
   const [analysisMode, setAnalysisMode] = useState('quick');
   const [loading, setLoading] = useState(false);
   const [expandedRows, setExpandedRows] = useState({});
+  const [showAiPreview, setShowAiPreview] = useState(false);
 
   const fetchSources = useCallback(async () => {
     const res = await fetch(`${API}/sources`);
@@ -322,15 +413,16 @@ export default function App() {
             <div className="mode-toggle">
               <button
                 className={analysisMode === 'quick' ? 'active-quick' : ''}
-                onClick={() => setAnalysisMode('quick')}
+                onClick={() => { setAnalysisMode('quick'); setShowAiPreview(false); }}
               >
                 Quick
               </button>
               <button
-                className={analysisMode === 'deep' ? 'active-deep' : ''}
-                onClick={() => setAnalysisMode('deep')}
+                className="btn-deep-disabled"
+                onClick={() => setShowAiPreview(true)}
+                title="AI analysis coming soon — click to see a sample"
               >
-                Deep (AI)
+                Deep (AI) ↗
               </button>
             </div>
             <div className="spacer" />
@@ -339,6 +431,96 @@ export default function App() {
               {loading ? 'Analyzing…' : 'Run analysis'}
             </button>
           </div>
+        </div>
+      )}
+
+      {/* ── AI Preview Panel ── */}
+      {showAiPreview && (
+        <div className="card ai-preview-card">
+          <div className="ai-preview-header">
+            <div className="ai-section-label" style={{ marginBottom: 0 }}>
+              <span className="ai-tag">AI</span>
+              <span className="card-title" style={{ marginBottom: 0 }}>Deep analysis — sample output</span>
+            </div>
+            <button className="btn-ghost btn-sm" onClick={() => setShowAiPreview(false)}>Dismiss</button>
+          </div>
+          <p className="ai-preview-note">
+            This is a real example of what Deep Analysis produces — run against a sample set of four sources.
+            AI analysis is coming soon.
+          </p>
+
+          <div className="ai-summary-text" style={{ marginBottom: 16 }}>{SAMPLE_AI.executive_summary}</div>
+
+          <div className="card-title" style={{ marginTop: 16 }}>Connector discovery</div>
+          <table className="source-table connector-table">
+            <thead>
+              <tr><th>Source</th><th>Connector</th><th>Method</th><th>Notes</th></tr>
+            </thead>
+            <tbody>
+              {SAMPLE_AI.connector_discovery.map((c, i) => (
+                <tr key={i}>
+                  <td><strong>{c.source}</strong></td>
+                  <td>{c.suggested_connector}</td>
+                  <td>{c.integration_method}</td>
+                  <td className="connector-notes">{c.complexity_notes}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+
+          <div className="card-title" style={{ marginTop: 20 }}>Integration strategy</div>
+          <div className="strategy-approach"><strong>Approach:</strong> {SAMPLE_AI.integration_strategy.approach}</div>
+          <p className="strategy-rationale">{SAMPLE_AI.integration_strategy.rationale}</p>
+          <div className="phases">
+            {SAMPLE_AI.integration_strategy.phases.map((p, i) => (
+              <div key={i} className="phase-card">
+                <div className="phase-header">
+                  <span className="phase-name">{p.name}</span>
+                  <span className="phase-weeks">{p.duration_weeks} wks</span>
+                </div>
+                <div className="phase-sources">
+                  {p.sources.map((s, j) => <span key={j} className="source-tag">{s}</span>)}
+                </div>
+                <p className="phase-rationale">{p.rationale}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="card-title" style={{ marginTop: 20 }}>Risk analysis</div>
+          {SAMPLE_AI.risk_heuristics.map((r, i) => (
+            <div key={i} className={`insight insight-ai-${r.severity}`}>
+              <div className="risk-header">
+                <span className={`badge badge-${r.severity}`}>{r.severity}</span>
+                {r.risk}
+              </div>
+              {r.affected_sources?.length > 0 && (
+                <div className="risk-sources">Affects: {r.affected_sources.join(', ')}</div>
+              )}
+              <div className="risk-mitigation"><strong>Mitigation:</strong> {r.mitigation}</div>
+            </div>
+          ))}
+
+          <div className="card-title" style={{ marginTop: 20 }}>AI estimate</div>
+          <div className="est-grid">
+            <div className="est-cell">
+              <div className="est-value">{SAMPLE_AI.ai_timeline.total_weeks} wks</div>
+              <div className="est-label">Timeline</div>
+            </div>
+            <div className="est-cell">
+              <div className="est-value" style={{ fontSize: '0.95rem', paddingTop: 4 }}>{SAMPLE_AI.ai_timeline.team_composition}</div>
+              <div className="est-label">Team</div>
+            </div>
+            <div className="est-cell">
+              <div className="est-value">{formatUSD(SAMPLE_AI.ai_cost_estimate.low_usd)}</div>
+              <div className="est-label">Cost low</div>
+            </div>
+            <div className="est-cell">
+              <div className="est-value">{formatUSD(SAMPLE_AI.ai_cost_estimate.high_usd)}</div>
+              <div className="est-label">Cost high</div>
+            </div>
+          </div>
+          <p className="est-assumptions"><strong>Assumptions:</strong> {SAMPLE_AI.ai_timeline.assumptions}</p>
+          <p className="est-assumptions"><strong>Cost assumptions:</strong> {SAMPLE_AI.ai_cost_estimate.assumptions}</p>
         </div>
       )}
 
