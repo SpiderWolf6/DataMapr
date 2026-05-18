@@ -420,7 +420,7 @@ export default function App() {
               <button
                 className="btn-deep-disabled"
                 onClick={() => setShowAiPreview(true)}
-                title="AI analysis coming soon — click to see a sample"
+                title="Disabled — click to see a real sample output"
               >
                 Deep (AI) ↗
               </button>
@@ -445,8 +445,8 @@ export default function App() {
             <button className="btn-ghost btn-sm" onClick={() => setShowAiPreview(false)}>Dismiss</button>
           </div>
           <p className="ai-preview-note">
-            This is a real example of what Deep Analysis produces — run against a sample set of four sources.
-            AI analysis is coming soon.
+            Deep Analysis runs against my own Azure OpenAI keys, so I've disabled open access to keep costs manageable.
+            Below is real output from an actual run — same sources, same model, nothing edited.
           </p>
 
           <div className="ai-summary-text" style={{ marginBottom: 16 }}>{SAMPLE_AI.executive_summary}</div>
