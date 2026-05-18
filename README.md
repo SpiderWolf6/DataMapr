@@ -219,13 +219,13 @@ The last 6 fields (integration signals) are optional on create/update — they d
     { "source": "Legacy ERP", "type": "critical", "message": "..." }
   ],
   "estimation": {
-    "estimated_weeks": 8.6,
-    "engineer_count": 2,
-    "cost_range": { "low": 25800, "high": 47300 },
+    "estimated_weeks": 34.5,
+    "engineer_count": 4,
+    "cost_range": { "low": 120750, "high": 258750 },
     "volatility_factor": 1.15,
     "compound_multiplier": 1.0,
     "breakdown": [
-      { "source": "Salesforce CRM", "weeks": 2.5, "risk": "Medium" }
+      { "source": "Salesforce CRM", "weeks": 10.0, "risk": "Medium" }
     ]
   }
 }
@@ -268,13 +268,13 @@ When `POST` with `{"mode": "deep"}`, the response includes everything above plus
       }
     ],
     "ai_timeline": {
-      "total_weeks": 12,
-      "team_composition": "2 data engineers, 1 architect",
+      "total_weeks": 32,
+      "team_composition": "3 data engineers, 1 integration architect",
       "assumptions": "..."
     },
     "ai_cost_estimate": {
-      "low_usd": 36000,
-      "high_usd": 66000,
+      "low_usd": 112000,
+      "high_usd": 240000,
       "assumptions": "..."
     }
   }
@@ -480,13 +480,15 @@ The estimation engine (`estimate_effort()` in `scoring.py`) produces timeline, t
 
 ### Base Calculation
 
-Each source contributes base weeks by risk level:
+Each source contributes base weeks by risk level, calibrated to 2024–2025 US industry benchmarks for data integration projects:
 
-| Risk Level | Base Weeks |
-| ---------- | ---------- |
-| Low        | 1.0        |
-| Medium     | 2.5        |
-| High       | 5.0        |
+| Risk Level | Base Weeks | Typical Scenario |
+| ---------- | ---------- | ---------------- |
+| Low        | 5.0        | Simple SaaS API or well-documented DB with a native connector |
+| Medium     | 10.0       | Moderate schema complexity, custom auth, or occasional drift |
+| High       | 20.0       | Legacy systems, no connector, frequent drift, or poor data quality |
+
+These ranges align with published ETL estimation benchmarks (SmartData Collective, ApiX-Drive, IBM) and real-world delivery data: simple integrations average 4–8 weeks per source; complex or legacy integrations routinely take 3–6 months (12–24+ weeks) per source.
 
 ### Non-linear Adjustments
 
@@ -506,10 +508,17 @@ compound_multiplier = 1 + 0.1 × (high_risk_count - 2)    // only if > 2
 
 ```
 total_weeks = SUM(base_weeks) × volatility_factor × compound_multiplier
-engineer_count = ceil(total_weeks / 6)
-cost_low = total_weeks × $3,000/week
-cost_high = total_weeks × $5,500/week
+engineer_count = ceil(total_weeks / 10)
+cost_low = total_weeks × $3,500/week
+cost_high = total_weeks × $7,500/week
 ```
+
+**Rate basis (2024–2025 US market):**
+- Low end ($3,500/week): mid-senior data engineer, W2 fully-loaded (salary + benefits + overhead). Hourly equivalent: ~$88/hr.
+- High end ($7,500/week): specialist contractor or integration consultant. Hourly equivalent: ~$188/hr.
+- Sources: Salary.com, Flexiple ETL cost benchmarks, Glassdoor data engineer rates.
+
+**Engineer count basis:** 1 engineer manages ~10 source-weeks of parallel work — consistent with industry norms for data integration teams where engineers handle 1–2 active sources concurrently.
 
 ---
 
@@ -581,9 +590,9 @@ Edit `assign_risk_level()` in `backend/scoring.py`.
 Edit the constants in `backend/scoring.py`:
 
 ```python
-BASE_WEEKS = {"Low": 1.0, "Medium": 2.5, "High": 5.0}
-WEEKLY_RATE_LOW = 3000
-WEEKLY_RATE_HIGH = 5500
+BASE_WEEKS = {"Low": 5.0, "Medium": 10.0, "High": 20.0}
+WEEKLY_RATE_LOW = 3500
+WEEKLY_RATE_HIGH = 7500
 ```
 
 ### Modifying the AI System Prompt

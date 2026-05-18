@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import './App.css';
 
-const API = '/api';
+const API = process.env.REACT_APP_API_URL ? `${process.env.REACT_APP_API_URL}/api` : '/api';
 
 const DEFAULTS = {
   name: '',
@@ -18,6 +18,61 @@ const DEFAULTS = {
   null_percentage: '0-5%',
   schema_drift: 'Stable',
   validation_coverage: 'Full',
+};
+
+const FIELD_INFO = {
+  name: {
+    what: 'A human-readable label for this data source.',
+    scoring: 'Not scored directly — used to identify the source in results, insights, and AI analysis.',
+  },
+  type: {
+    what: 'The category of system this source belongs to.',
+    scoring: 'Carries 20% weight. File (2) → Database (4) → SaaS API (6) → Legacy (9). Legacy scores highest due to poor documentation, brittle APIs, and change risk.',
+  },
+  schema_complexity: {
+    what: 'How complex and nested the data structure is.',
+    scoring: 'Carries 20% weight. Simple (2) → Medium (5) → Complex (9). Complex schemas require more mapping effort and are harder to maintain.',
+  },
+  data_quality: {
+    what: 'How clean, consistent, and complete the data is.',
+    scoring: 'Carries 20% weight. High (1) → Low (9). Low quality + Frequent drift triggers a ×1.3 compound multiplier.',
+  },
+  access: {
+    what: 'How difficult it is to gain technical access to this source.',
+    scoring: 'Carries 15% weight. Easy (1) → Hard (9). Hard access + Unknown reliability triggers a ×1.2 compound multiplier.',
+  },
+  connector: {
+    what: 'Whether a pre-built integration connector exists.',
+    scoring: 'Carries 15% weight. Native (1) → None (9). No connector + Legacy type triggers the highest compound multiplier at ×1.4.',
+  },
+  volume: {
+    what: 'Approximate data volume this source produces.',
+    scoring: 'Carries 10% weight with logarithmic scaling — Small→Medium matters more than Medium→Large.',
+  },
+  auth_type: {
+    what: 'The authentication mechanism required to connect.',
+    scoring: 'Part of the extended signal score (~30% of total). None (1) → Custom (9). Strict rate limits + Custom auth triggers ×1.2.',
+  },
+  rate_limits: {
+    what: "How restrictive this source's API rate limits are.",
+    scoring: 'Unlimited (1) → Strict (9). Strict limits force throttling and batching — significant engineering overhead.',
+  },
+  api_reliability: {
+    what: "The uptime/SLA of this source's API.",
+    scoring: '99.9% (1) → Unknown (8). Unknown scores nearly as high as 95% — it forces defensive design. Each unreliable source adds 15% to total timeline.',
+  },
+  null_percentage: {
+    what: 'Approximate percentage of records with missing/null values.',
+    scoring: '0–5% (1) → 20%+ (9). High nulls + No validation coverage triggers ×1.25.',
+  },
+  schema_drift: {
+    what: "How often this source's data structure changes without notice.",
+    scoring: 'Stable (1) → Frequent (9). Frequent drift adds 15% to timeline per volatile source. Pairs with Low quality for ×1.3.',
+  },
+  validation_coverage: {
+    what: 'How much validation is enforced at the source before you receive data.',
+    scoring: 'Full (1) → None (9). No validation + 20%+ nulls triggers ×1.25 — your pipeline absorbs all quality enforcement.',
+  },
 };
 
 const OPTIONS = {
@@ -36,13 +91,27 @@ const OPTIONS = {
 };
 
 function riskColor(level) {
-  if (level === 'Low') return '#2ec4b6';
-  if (level === 'Medium') return '#f4a261';
-  return '#e63946';
+  if (level === 'Low') return '#1a936f';
+  if (level === 'Medium') return '#b96a0a';
+  return '#c0392b';
 }
 
 function formatUSD(n) {
+  if (n >= 1000000) return '$' + (n / 1000000).toFixed(1) + 'M';
+  if (n >= 1000) return '$' + Math.round(n / 1000) + 'K';
   return '$' + n.toLocaleString();
+}
+
+function riskPillClass(level) {
+  if (level === 'Low') return 'risk-pill risk-pill-low';
+  if (level === 'Medium') return 'risk-pill risk-pill-medium';
+  return 'risk-pill risk-pill-high';
+}
+
+function dotClass(level) {
+  if (level === 'Low') return 'risk-dot dot-low';
+  if (level === 'Medium') return 'risk-dot dot-medium';
+  return 'risk-dot dot-high';
 }
 
 export default function App() {
@@ -62,9 +131,7 @@ export default function App() {
 
   useEffect(() => { fetchSources(); }, [fetchSources]);
 
-  const handleChange = (e) => {
-    setForm({ ...form, [e.target.name]: e.target.value });
-  };
+  const handleChange = (e) => setForm({ ...form, [e.target.name]: e.target.value });
 
   const handleSubmit = async () => {
     setError('');
@@ -108,6 +175,7 @@ export default function App() {
       schema_drift: src.schema_drift || 'Stable',
       validation_coverage: src.validation_coverage || 'Full',
     });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleDelete = async (id) => {
@@ -136,29 +204,31 @@ export default function App() {
   };
 
   const cancelEdit = () => { setEditId(null); setForm({ ...DEFAULTS }); };
-
-  const toggleRow = (id) => {
-    setExpandedRows(prev => ({ ...prev, [id]: !prev[id] }));
-  };
+  const toggleRow = (id) => setExpandedRows(prev => ({ ...prev, [id]: !prev[id] }));
 
   const ai = analysis?.ai_insights;
+  const est = analysis?.estimation;
 
   return (
     <div className="app">
-      <header>
-        <h1>DataMapr</h1>
-        <p>Data Integration Complexity Scorer</p>
+      {/* ── Header ── */}
+      <header className="site-header">
+        <div className="header-top">
+          <h1>DataMapr</h1>
+          <span className="header-version">beta</span>
+        </div>
+        <p>Data integration complexity scoring and effort estimation</p>
       </header>
 
       {/* ── Source Form ── */}
       <div className="card">
-        <h2>{editId ? 'Edit Source' : 'Add Data Source'}</h2>
-        {error && <p style={{ color: '#e63946', marginBottom: 12 }}>{error}</p>}
+        <div className="card-title">{editId ? 'Editing source' : 'Add data source'}</div>
+        {error && <div className="form-error">{error}</div>}
 
-        <h3 className="form-section-title">Source Characteristics</h3>
+        <div className="form-section-label">Source characteristics</div>
         <div className="form-grid">
           <div className="form-group">
-            <label>Name</label>
+            <label>Name <InfoTooltip field="name" /></label>
             <input name="name" value={form.name} onChange={handleChange} placeholder="e.g. Salesforce CRM" />
           </div>
           <SelectField label="Type" name="type" value={form.type} options={OPTIONS.types} onChange={handleChange} />
@@ -169,7 +239,7 @@ export default function App() {
           <SelectField label="Volume" name="volume" value={form.volume} options={OPTIONS.volume} onChange={handleChange} />
         </div>
 
-        <h3 className="form-section-title">Integration Signals</h3>
+        <div className="form-section-label" style={{ marginTop: 20 }}>Integration signals</div>
         <div className="form-grid">
           <SelectField label="Auth Type" name="auth_type" value={form.auth_type} options={OPTIONS.auth_type} onChange={handleChange} />
           <SelectField label="Rate Limits" name="rate_limits" value={form.rate_limits} options={OPTIONS.rate_limits} onChange={handleChange} />
@@ -179,19 +249,19 @@ export default function App() {
           <SelectField label="Validation Coverage" name="validation_coverage" value={form.validation_coverage} options={OPTIONS.validation_coverage} onChange={handleChange} />
         </div>
 
-        <div className="btn-row">
+        <div className="form-actions">
           <button className="btn-primary" onClick={handleSubmit}>
-            {editId ? 'Update Source' : 'Add Source'}
+            {editId ? 'Save changes' : 'Add source'}
           </button>
-          {editId && <button className="btn-secondary" onClick={cancelEdit}>Cancel</button>}
+          {editId && <button className="btn-ghost" onClick={cancelEdit}>Cancel</button>}
         </div>
       </div>
 
-      {/* ── Sources Table ── */}
+      {/* ── Sources list ── */}
       {sources.length > 0 && (
         <div className="card">
-          <h2>Data Sources ({sources.length})</h2>
-          <div style={{ overflowX: 'auto' }}>
+          <div className="card-title">Sources ({sources.length})</div>
+          <div className="table-wrap">
             <table className="source-table">
               <thead>
                 <tr>
@@ -202,7 +272,7 @@ export default function App() {
                   <th>Quality</th>
                   <th>Connector</th>
                   <th>Volume</th>
-                  <th>Actions</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
@@ -210,7 +280,7 @@ export default function App() {
                   <React.Fragment key={s.id}>
                     <tr>
                       <td>
-                        <button className="btn-expand" onClick={() => toggleRow(s.id)}>
+                        <button className="btn-expand" onClick={() => toggleRow(s.id)} title="Show integration signals">
                           {expandedRows[s.id] ? '▾' : '▸'}
                         </button>
                       </td>
@@ -222,8 +292,8 @@ export default function App() {
                       <td>{s.volume}</td>
                       <td>
                         <div className="actions-cell">
-                          <button className="btn-primary btn-sm" onClick={() => handleEdit(s)}>Edit</button>
-                          <button className="btn-danger btn-sm" onClick={() => handleDelete(s.id)}>Del</button>
+                          <button className="btn-ghost btn-sm" onClick={() => handleEdit(s)}>Edit</button>
+                          <button className="btn-danger btn-sm" onClick={() => handleDelete(s.id)}>Remove</button>
                         </div>
                       </td>
                     </tr>
@@ -232,10 +302,10 @@ export default function App() {
                         <td colSpan={8}>
                           <div className="expand-content">
                             <span><strong>Auth:</strong> {s.auth_type}</span>
-                            <span><strong>Rate Limits:</strong> {s.rate_limits}</span>
+                            <span><strong>Rate limits:</strong> {s.rate_limits}</span>
                             <span><strong>Reliability:</strong> {s.api_reliability}</span>
                             <span><strong>Nulls:</strong> {s.null_percentage}</span>
-                            <span><strong>Schema Drift:</strong> {s.schema_drift}</span>
+                            <span><strong>Schema drift:</strong> {s.schema_drift}</span>
                             <span><strong>Validation:</strong> {s.validation_coverage}</span>
                             <span><strong>Access:</strong> {s.access}</span>
                           </div>
@@ -248,124 +318,141 @@ export default function App() {
             </table>
           </div>
 
-          <div className="btn-row" style={{ marginTop: 16 }}>
-            <div className="toggle-group">
-              <button className={analysisMode === 'quick' ? 'btn-primary' : 'btn-secondary'} onClick={() => setAnalysisMode('quick')}>
-                Quick Analysis
+          <div className="analysis-bar">
+            <div className="mode-toggle">
+              <button
+                className={analysisMode === 'quick' ? 'active-quick' : ''}
+                onClick={() => setAnalysisMode('quick')}
+              >
+                Quick
               </button>
-              <button className={analysisMode === 'deep' ? 'btn-accent' : 'btn-secondary'} onClick={() => setAnalysisMode('deep')}>
-                Deep Analysis (AI)
+              <button
+                className={analysisMode === 'deep' ? 'active-deep' : ''}
+                onClick={() => setAnalysisMode('deep')}
+              >
+                Deep (AI)
               </button>
             </div>
+            <div className="spacer" />
+            <button className="btn-ghost btn-sm" onClick={handleClearAll}>Clear all</button>
             <button className="btn-success" onClick={handleAnalyze} disabled={loading}>
-              {loading ? 'Analyzing...' : 'Analyze'}
+              {loading ? 'Analyzing…' : 'Run analysis'}
             </button>
-            <button className="btn-danger" onClick={handleClearAll}>Clear All</button>
           </div>
         </div>
       )}
 
-      {/* ── Loading Overlay ── */}
+      {/* ── Loading ── */}
       {loading && (
         <div className="card loading-card">
           <div className="spinner" />
-          <p>{analysisMode === 'deep' ? 'Running AI-powered deep analysis...' : 'Computing scores...'}</p>
+          <div className="loading-label">
+            {analysisMode === 'deep' ? 'Running deep analysis via AI…' : 'Computing scores…'}
+          </div>
         </div>
       )}
 
-      {/* ── Analysis Results ── */}
+      {/* ── Results ── */}
       {analysis && !loading && (
         <>
-          {/* Score Banner */}
+          {/* Score + risk */}
           <div className="card">
-            <h2>Analysis Results</h2>
-            <div className="score-banner">
-              <div className="score-item">
-                <div className="value" style={{ color: riskColor(analysis.risk_level) }}>
+            <div className="card-title">Results</div>
+            <div className="results-header">
+              <div className="score-block">
+                <span className="score-number" style={{ color: riskColor(analysis.risk_level) }}>
                   {analysis.total_score}
-                </div>
-                <div className="label">Complexity Score</div>
+                </span>
+                <span className="score-denom">/ 100</span>
               </div>
-              <div className="score-item">
-                <div className="value" style={{ color: riskColor(analysis.risk_level) }}>
-                  {analysis.risk_level}
+              <div className="score-meta">
+                <div className={riskPillClass(analysis.risk_level)}>
+                  <span className={dotClass(analysis.risk_level)} />
+                  {analysis.risk_level} risk
                 </div>
-                <div className="label">Risk Level</div>
+                <div className="score-subtext">
+                  {analysis.source_scores?.length} source{analysis.source_scores?.length !== 1 ? 's' : ''} scored
+                </div>
               </div>
             </div>
           </div>
 
-          {/* Time & Cost Estimation */}
-          {analysis.estimation && (
+          {/* Effort estimation */}
+          {est && (
             <div className="card">
-              <h2>Effort Estimation</h2>
-              <div className="estimation-grid">
-                <div className="est-item">
-                  <div className="est-value">{analysis.estimation.estimated_weeks}</div>
-                  <div className="est-label">Weeks</div>
+              <div className="card-title">Effort estimation</div>
+              <div className="est-grid">
+                <div className="est-cell">
+                  <div className="est-value">{est.estimated_weeks} wks</div>
+                  <div className="est-label">Timeline</div>
                 </div>
-                <div className="est-item">
-                  <div className="est-value">{analysis.estimation.engineer_count}</div>
+                <div className="est-cell">
+                  <div className="est-value">{est.engineer_count}</div>
                   <div className="est-label">Engineers</div>
                 </div>
-                <div className="est-item">
-                  <div className="est-value">
-                    {formatUSD(analysis.estimation.cost_range.low)} – {formatUSD(analysis.estimation.cost_range.high)}
-                  </div>
-                  <div className="est-label">Estimated Cost (USD)</div>
+                <div className="est-cell">
+                  <div className="est-value">{formatUSD(est.cost_range.low)}</div>
+                  <div className="est-label">Cost low</div>
+                </div>
+                <div className="est-cell">
+                  <div className="est-value">{formatUSD(est.cost_range.high)}</div>
+                  <div className="est-label">Cost high</div>
                 </div>
               </div>
-              {(analysis.estimation.volatility_factor > 1 || analysis.estimation.compound_multiplier > 1) && (
-                <div className="est-factors">
-                  {analysis.estimation.volatility_factor > 1 && (
-                    <span className="factor-badge">Volatility: ×{analysis.estimation.volatility_factor}</span>
+              {(est.volatility_factor > 1 || est.compound_multiplier > 1) && (
+                <div className="factor-row">
+                  {est.volatility_factor > 1 && (
+                    <span className="factor-chip">Volatility ×{est.volatility_factor}</span>
                   )}
-                  {analysis.estimation.compound_multiplier > 1 && (
-                    <span className="factor-badge">Compound risk: ×{analysis.estimation.compound_multiplier}</span>
+                  {est.compound_multiplier > 1 && (
+                    <span className="factor-chip">Compound risk ×{est.compound_multiplier}</span>
                   )}
                 </div>
               )}
+              <div className="est-note">
+                Rates: $3,500–$7,500/wk per engineer (W2 fully-loaded to specialist contractor, US 2024–25)
+              </div>
             </div>
           )}
 
-          {/* Bar Chart */}
-          <div className="card">
-            <h2>Scores by Source</h2>
-            <div className="chart-container">
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={analysis.source_scores} margin={{ top: 10, right: 20, left: 0, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="name" />
-                  <YAxis domain={[0, 100]} />
-                  <Tooltip
-                    formatter={(val, name) => {
-                      if (name === 'Nonlinear') return [`${val} / 100`, 'Nonlinear Score'];
-                      return [`${val} / 100`, 'Linear Score'];
-                    }}
-                  />
-                  <Bar dataKey="normalized_score" name="Nonlinear" radius={[6, 6, 0, 0]}>
-                    {analysis.source_scores.map((entry, idx) => (
-                      <Cell key={idx} fill={riskColor(entry.risk_level)} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+          {/* Chart */}
+          {analysis.source_scores?.length > 0 && (
+            <div className="card">
+              <div className="card-title">Score by source</div>
+              <div className="chart-wrap">
+                <ResponsiveContainer width="100%" height={240}>
+                  <BarChart data={analysis.source_scores} margin={{ top: 8, right: 16, left: -10, bottom: 4 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
+                    <XAxis dataKey="name" tick={{ fontSize: 12, fill: '#999' }} axisLine={false} tickLine={false} />
+                    <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: '#bbb' }} axisLine={false} tickLine={false} />
+                    <Tooltip
+                      contentStyle={{ border: '1px solid #eee', borderRadius: 7, fontSize: 13 }}
+                      formatter={(val) => [`${val} / 100`, 'Complexity score']}
+                    />
+                    <Bar dataKey="normalized_score" radius={[5, 5, 0, 0]} maxBarSize={60}>
+                      {analysis.source_scores.map((entry, idx) => (
+                        <Cell key={idx} fill={riskColor(entry.risk_level)} fillOpacity={0.85} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
             </div>
-          </div>
+          )}
 
-          {/* Per-source scores table */}
+          {/* Per-source scores */}
           <div className="card">
-            <h2>Source Scores</h2>
+            <div className="card-title">Source breakdown</div>
             <table className="source-table">
               <thead>
                 <tr>
                   <th>Source</th>
                   <th>Linear</th>
                   <th>Nonlinear</th>
-                  <th>Signal Avg</th>
+                  <th>Signals avg</th>
                   <th>Score</th>
                   <th>Risk</th>
-                  <th>Compound Factors</th>
+                  <th>Compound factors</th>
                 </tr>
               </thead>
               <tbody>
@@ -383,10 +470,8 @@ export default function App() {
                     </td>
                     <td>
                       {s.compound_factors.length > 0
-                        ? s.compound_factors.map((f, i) => (
-                            <span key={i} className="compound-tag">{f}</span>
-                          ))
-                        : <span style={{ color: '#aaa' }}>—</span>
+                        ? s.compound_factors.map((f, i) => <span key={i} className="compound-tag">{f}</span>)
+                        : <span style={{ color: '#ccc' }}>—</span>
                       }
                     </td>
                   </tr>
@@ -395,10 +480,10 @@ export default function App() {
             </table>
           </div>
 
-          {/* Static Insights */}
-          {analysis.insights.length > 0 && (
+          {/* Insights */}
+          {analysis.insights?.length > 0 && (
             <div className="card">
-              <h2>Insights</h2>
+              <div className="card-title">Insights</div>
               {analysis.insights.map((ins, i) => (
                 <div key={i} className={`insight insight-${ins.type}`}>
                   {ins.message}
@@ -407,37 +492,38 @@ export default function App() {
             </div>
           )}
 
-          {/* AI Error Banner */}
+          {/* AI error */}
           {analysis.ai_error && (
-            <div className="card ai-error-card">
-              <p>{analysis.ai_error}</p>
-            </div>
+            <div className="card ai-error-card">{analysis.ai_error}</div>
           )}
 
-          {/* ── AI Deep Insights ── */}
+          {/* AI deep analysis */}
           {ai && (
             <>
-              <div className="card ai-card">
-                <h2>AI Deep Analysis</h2>
-
-                {/* Executive Summary */}
-                {ai.executive_summary && (
-                  <div className="ai-summary">
-                    <p>{ai.executive_summary}</p>
+              {/* Executive summary */}
+              {ai.executive_summary && (
+                <div className="card">
+                  <div className="ai-section-label">
+                    <span className="ai-tag">AI</span>
+                    <span className="card-title" style={{ marginBottom: 0 }}>Summary</span>
                   </div>
-                )}
-              </div>
+                  <div className="ai-summary-text">{ai.executive_summary}</div>
+                </div>
+              )}
 
-              {/* Connector Discovery */}
+              {/* Connector discovery */}
               {ai.connector_discovery?.length > 0 && (
-                <div className="card ai-card">
-                  <h2>Connector Discovery</h2>
-                  <table className="source-table">
+                <div className="card">
+                  <div className="ai-section-label">
+                    <span className="ai-tag">AI</span>
+                    <span className="card-title" style={{ marginBottom: 0 }}>Connector discovery</span>
+                  </div>
+                  <table className="source-table connector-table">
                     <thead>
                       <tr>
                         <th>Source</th>
-                        <th>Suggested Connector</th>
-                        <th>Integration Method</th>
+                        <th>Connector</th>
+                        <th>Method</th>
                         <th>Notes</th>
                       </tr>
                     </thead>
@@ -447,7 +533,7 @@ export default function App() {
                           <td><strong>{c.source}</strong></td>
                           <td>{c.suggested_connector}</td>
                           <td>{c.integration_method}</td>
-                          <td>{c.complexity_notes}</td>
+                          <td className="connector-notes">{c.complexity_notes}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -455,11 +541,14 @@ export default function App() {
                 </div>
               )}
 
-              {/* Integration Strategy */}
+              {/* Integration strategy */}
               {ai.integration_strategy && (
-                <div className="card ai-card">
-                  <h2>Integration Strategy</h2>
-                  <div className="strategy-header">
+                <div className="card">
+                  <div className="ai-section-label">
+                    <span className="ai-tag">AI</span>
+                    <span className="card-title" style={{ marginBottom: 0 }}>Integration strategy</span>
+                  </div>
+                  <div className="strategy-approach">
                     <strong>Approach:</strong> {ai.integration_strategy.approach}
                   </div>
                   <p className="strategy-rationale">{ai.integration_strategy.rationale}</p>
@@ -468,12 +557,14 @@ export default function App() {
                       {ai.integration_strategy.phases.map((p, i) => (
                         <div key={i} className="phase-card">
                           <div className="phase-header">
-                            <strong>Phase {i + 1}: {p.name}</strong>
-                            <span className="phase-duration">{p.duration_weeks} weeks</span>
+                            <span className="phase-name">{p.name}</span>
+                            <span className="phase-weeks">{p.duration_weeks} wks</span>
                           </div>
-                          <div className="phase-sources">
-                            {p.sources?.map((s, j) => <span key={j} className="source-tag">{s}</span>)}
-                          </div>
+                          {p.sources?.length > 0 && (
+                            <div className="phase-sources">
+                              {p.sources.map((s, j) => <span key={j} className="source-tag">{s}</span>)}
+                            </div>
+                          )}
                           <p className="phase-rationale">{p.rationale}</p>
                         </div>
                       ))}
@@ -482,60 +573,68 @@ export default function App() {
                 </div>
               )}
 
-              {/* Risk Heuristics */}
+              {/* Risk heuristics */}
               {ai.risk_heuristics?.length > 0 && (
-                <div className="card ai-card">
-                  <h2>AI Risk Heuristics</h2>
+                <div className="card">
+                  <div className="ai-section-label">
+                    <span className="ai-tag">AI</span>
+                    <span className="card-title" style={{ marginBottom: 0 }}>Risk analysis</span>
+                  </div>
                   {ai.risk_heuristics.map((r, i) => (
                     <div key={i} className={`insight insight-ai-${r.severity}`}>
                       <div className="risk-header">
                         <span className={`badge badge-${r.severity}`}>{r.severity}</span>
-                        <strong>{r.risk}</strong>
+                        {r.risk}
                       </div>
                       {r.affected_sources?.length > 0 && (
-                        <div className="risk-sources">
-                          Affects: {r.affected_sources.join(', ')}
-                        </div>
+                        <div className="risk-sources">Affects: {r.affected_sources.join(', ')}</div>
                       )}
-                      <div className="risk-mitigation">
-                        <em>Mitigation:</em> {r.mitigation}
-                      </div>
+                      <div className="risk-mitigation"><strong>Mitigation:</strong> {r.mitigation}</div>
                     </div>
                   ))}
                 </div>
               )}
 
-              {/* AI Timeline & Cost */}
+              {/* AI timeline + cost */}
               {(ai.ai_timeline || ai.ai_cost_estimate) && (
-                <div className="card ai-card">
-                  <h2>AI Estimate</h2>
-                  <div className="estimation-grid">
+                <div className="card">
+                  <div className="ai-section-label">
+                    <span className="ai-tag">AI</span>
+                    <span className="card-title" style={{ marginBottom: 0 }}>AI estimate</span>
+                  </div>
+                  <div className="est-grid">
                     {ai.ai_timeline && (
                       <>
-                        <div className="est-item">
-                          <div className="est-value">{ai.ai_timeline.total_weeks}</div>
-                          <div className="est-label">Weeks (AI)</div>
+                        <div className="est-cell">
+                          <div className="est-value">{ai.ai_timeline.total_weeks} wks</div>
+                          <div className="est-label">Timeline</div>
                         </div>
-                        <div className="est-item">
-                          <div className="est-value-sm">{ai.ai_timeline.team_composition}</div>
+                        <div className="est-cell">
+                          <div className="est-value" style={{ fontSize: '1rem', paddingTop: 4 }}>
+                            {ai.ai_timeline.team_composition}
+                          </div>
                           <div className="est-label">Team</div>
                         </div>
                       </>
                     )}
                     {ai.ai_cost_estimate && (
-                      <div className="est-item">
-                        <div className="est-value">
-                          {formatUSD(ai.ai_cost_estimate.low_usd)} – {formatUSD(ai.ai_cost_estimate.high_usd)}
+                      <>
+                        <div className="est-cell">
+                          <div className="est-value">{formatUSD(ai.ai_cost_estimate.low_usd)}</div>
+                          <div className="est-label">Cost low</div>
                         </div>
-                        <div className="est-label">Cost (AI)</div>
-                      </div>
+                        <div className="est-cell">
+                          <div className="est-value">{formatUSD(ai.ai_cost_estimate.high_usd)}</div>
+                          <div className="est-label">Cost high</div>
+                        </div>
+                      </>
                     )}
                   </div>
                   {ai.ai_timeline?.assumptions && (
-                    <p className="est-assumptions"><em>Assumptions:</em> {ai.ai_timeline.assumptions}</p>
+                    <p className="est-assumptions"><strong>Assumptions:</strong> {ai.ai_timeline.assumptions}</p>
                   )}
                   {ai.ai_cost_estimate?.assumptions && (
-                    <p className="est-assumptions"><em>Cost assumptions:</em> {ai.ai_cost_estimate.assumptions}</p>
+                    <p className="est-assumptions"><strong>Cost assumptions:</strong> {ai.ai_cost_estimate.assumptions}</p>
                   )}
                 </div>
               )}
@@ -547,10 +646,29 @@ export default function App() {
   );
 }
 
+function InfoTooltip({ field }) {
+  const info = FIELD_INFO[field];
+  if (!info) return null;
+  return (
+    <span className="info-icon" tabIndex={0}>
+      i
+      <span className="info-popup">
+        <strong>{info.what}</strong>
+        <hr className="info-divider" />
+        <span className="info-scoring-label">Scoring</span>
+        {info.scoring}
+      </span>
+    </span>
+  );
+}
+
 function SelectField({ label, name, value, options, onChange }) {
   return (
     <div className="form-group">
-      <label>{label}</label>
+      <label>
+        {label}
+        <InfoTooltip field={name} />
+      </label>
       <select name={name} value={value} onChange={onChange}>
         {options.map((opt) => (
           <option key={opt} value={opt}>{opt}</option>

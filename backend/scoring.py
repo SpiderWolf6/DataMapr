@@ -229,9 +229,16 @@ def generate_insights(sources: list[dict]) -> list[dict]:
 
 # ── Time and cost estimation ────────────────────────────────────────────────
 
-BASE_WEEKS = {"Low": 1.0, "Medium": 2.5, "High": 5.0}
-WEEKLY_RATE_LOW = 3000   # USD per engineer per week (low estimate)
-WEEKLY_RATE_HIGH = 5500  # USD per engineer per week (high estimate)
+# Industry benchmarks (2024-2025 US market):
+# - Low: simple SaaS APIs / well-documented DBs with native connectors → 4-6 weeks per source
+# - Medium: moderate schema complexity, custom auth, some drift → 8-12 weeks per source
+# - High: legacy systems, no connector, frequent drift, poor quality → 16-24 weeks per source
+# Rates: $3,500–$4,500/wk for a mid-senior data engineer (W2 fully-loaded);
+#         up to $7,000–$8,000/wk for specialist contractors. Range below covers W2 to contractor.
+# Source: Salary.com, Flexiple, SmartData Collective ETL estimation benchmarks (2024-2025).
+BASE_WEEKS = {"Low": 5.0, "Medium": 10.0, "High": 20.0}
+WEEKLY_RATE_LOW = 3500   # USD per engineer per week — mid-senior W2 fully-loaded
+WEEKLY_RATE_HIGH = 7500  # USD per engineer per week — specialist contractor rate
 
 
 def estimate_effort(sources: list[dict], source_scores: list[dict]) -> dict:
@@ -278,8 +285,8 @@ def estimate_effort(sources: list[dict], source_scores: list[dict]) -> dict:
     total_weeks *= volatility_factor * compound_multiplier
     total_weeks = round(total_weeks, 1)
 
-    # Engineer count: one engineer handles ~6 source-weeks
-    engineer_count = max(1, math.ceil(total_weeks / 6))
+    # 1 engineer handles ~10 source-weeks concurrently (industry norm for data integration teams)
+    engineer_count = max(1, math.ceil(total_weeks / 10))
 
     cost_low = round(total_weeks * WEEKLY_RATE_LOW)
     cost_high = round(total_weeks * WEEKLY_RATE_HIGH)
