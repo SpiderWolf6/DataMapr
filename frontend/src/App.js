@@ -445,7 +445,7 @@ export default function App() {
             <button className="btn-ghost btn-sm" onClick={() => setShowAiPreview(false)}>Dismiss</button>
           </div>
           <p className="ai-preview-note">
-            Deep Analysis runs against my own Azure OpenAI keys, so I've disabled open access to keep costs manageable.
+            Deep Analysis runs using Azure OpenAI, so I've disabled open access to keep costs manageable.
             Below is real output from an actual run — same sources, same model, nothing edited.
           </p>
 
